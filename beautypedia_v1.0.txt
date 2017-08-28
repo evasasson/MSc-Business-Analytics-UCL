@@ -1,0 +1,115 @@
+import re
+import json
+from bs4 import BeautifulSoup
+import sys
+import urllib2
+import csv
+import httplib
+from multiprocessing import Pool
+
+
+# the next 2 lines are for handling the incomplete response received by urllib2, the last line is a workaround for mex memory usage by multiprocessing
+httplib.HTTPConnection._http_vsn = 10				
+httplib.HTTPConnection._http_vsn_str = 'HTTP/1.0'	
+sys.setrecursionlimit(50000)
+
+# to set by the user
+domain = "https://www.beautypedia.com"
+item = {'Picture': '', 'Product': '', 'Brand': '', 'Price': '', 'category1': '', 'category3': '', 'Ingredients': '', 'Animal_Test' : '' }
+
+def encode_and_skip_lines(data_local):				# sanitizing the results
+	return data_local.encode('utf-8').strip().replace('\n', ' ').replace('\r', '')
+
+# get all items containers in page and return a JSON response
+def parsePage(no_of_page_to_parse, base_url_of_sub_category):
+	# from the website url, get the JSON api url that will be used to get items
+	url = base_url_of_sub_category.replace('No=0','No='+str(0+24*(int(no_of_page_to_parse)-1)))
+	req = urllib2.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+	response = urllib2.urlopen(req).read()
+	return response
+
+# for every item container, scrape interesting data 
+def parseItem(item_link):
+	item = {'picture': '', 'product': '', 'brand': '', 'price': '', 'category1': '', 'category3': '', 'ingredients': '', 'animal_test' : '' }
+	item_href = item_link.attrs['href'].replace(' ','%20')
+	req = urllib2.Request(domain+item_href, headers={'User-Agent':'Mozilla/5.0'})
+	response = urllib2.urlopen(req).read()
+	soup_detailed_page = BeautifulSoup(response)
+	try:
+		item['picture'] =  encode_and_skip_lines(soup_detailed_page.find('div' , {'class' : 'product-image'}).find('img').attrs['src'])
+		item['product'] =  encode_and_skip_lines(soup_detailed_page.find('a' , {'class' : 'product-name'}).text)
+		item['brand'] =  encode_and_skip_lines(soup_detailed_page.find('a' , {'class' : 'brand-name'}).text)
+		item['price'] =  encode_and_skip_lines(soup_detailed_page.find('span' , {'class' : 'price'}).text)
+		item['ingredients'] =  encode_and_skip_lines(soup_detailed_page.select('div.content-item.ingredients')[0].text)
+		item['animal_test'] = 1 if soup_detailed_page.select('div.stat.tested-on-animals')[0].text.split(":")[1] == "Yes" else 0
+	except:
+		item['picture'] = 'Not Found'
+	return item
+
+def get_sub_categories_links(category):
+	url = domain+'/skin-care-reviews/all-makeup-products/CATEGORY'
+
+	url = url.replace('CATEGORY',category)
+
+	req = urllib2.Request(url, headers={'User-Agent':'Mozilla/5.0'})
+	response = urllib2.urlopen(req).read()
+	soup_page = BeautifulSoup(response)
+	sub_categories_links = soup_page.find('div' , {'data-reactid' : '107'}).find_all('a')
+
+	return sub_categories_links
+
+# to set by the user : the category name
+categories = ['Skin-Care', 'makeup']
+
+# to set by the user : choose the category to scrape
+category = categories[1]
+sub_categories_links = get_sub_categories_links(category)
+
+#for sub_categories_link in sub_categories_links:
+# Skin-Care sub categories
+# ['Acne & Blemish Treatments' , Body Lotions & Creams' , 'Body Washes' , 'Body-Care Products' , 'Cleansers' , 'Exfoliants' , 'Eye Creams & Treatments' , 'Face Masks' , 'Face Oils' , 'Hand Lotions & Creams' , 'Lip Balms & Treatments' , 'Makeup Removers' , 'Moisturizers, Daytime & Nighttime', 'Oil-Absorbing Products' , 'Retinol Products' , 'Scrubs' , 'Self-Tanners' , 'Serums & Boosters' , 'Shave Products' , 'Sunscreens, Face & Body' , 'Toners & Face Mists' , 'Vitamin C Products' ]
+# makeup sub categories
+# ['Best & Worst Makeup Products','Blushes','Bronzers','Brushes & Sponges','Concealers & Correctors','Contour & Highlight Products	','Eye Lash Enhancers & Primers','Eyebrow Fillers & Shapers','Eyeliners','Eyeshadow Palettes','Eyeshadow Primers & Bases','Eyeshadows	','Foundation Primers','Foundations With Sunscreen','Foundations Without Sunscreen','Lip Glosses','Lip Pencils','Lipsticks	','Luminizers & Highlighters','Mascaras, Regular','Mascaras, Waterproof','Powders, Pressed & Loose','Specialty Products','Tinted Moisturizers/BB Creams']
+
+# to set by the user: choose the sub categories to scrape
+	if sub_categories_link.text in ['Acne & Blemish Treatments' , 'Body Lotions & Creams' , 'Body Washes' , 'Body-Care Products' , 'Cleansers' , 'Exfoliants' , 'Eye Creams & Treatments' , 'Face Masks' , 'Face Oils' , 'Hand Lotions & Creams' , 'Lip Balms & Treatments' , 'Makeup Removers' , 'Moisturizers, Daytime & Nighttime', 'Oil-Absorbing Products' , 'Retinol Products' , 'Scrubs' , 'Self-Tanners' , 'Serums & Boosters' , 'Shave Products' , 'Sunscreens, Face & Body' , 'Toners & Face Mists' , 'Vitamin C Products' ]:
+
+		with open("output.csv",'a') as resultFile:
+			wr = csv.writer(resultFile, delimiter=',')
+			wr.writerow(['picture' , 'product' , 'brand', 'price', 'category1', 'category3', 'ingredients', 'animal_test'])
+
+			# get useful data used in looping from base URl of subcategory (will be used in looping the pages of subcategory)
+			sub_category =	sub_categories_link.attrs['href'].split('/')[-1]
+			req = urllib2.Request(domain+str(sub_categories_link.attrs['href']), headers={'User-Agent':'Mozilla/5.0'})
+			response = urllib2.urlopen(req).read()
+			soup_page = BeautifulSoup(response)
+			N_parameter_of_base_url_of_sub_category = soup_page.find_all('div' , {'class' : 'current-value'})[0].find('div').attrs['value'].split('&')[0]
+
+			base_url_of_sub_category = domain+str(sub_categories_link.attrs['href']+N_parameter_of_base_url_of_sub_category+'&No=0&Nrpp=24&Ns=p_num_days_published%7C0')
+			total_pages_in_sub_category = int(soup_page.find('span' , {'class' : 'total-pages'}).text)
+			
+			# parse sub_category
+			for page_no in range(1, total_pages_in_sub_category+1):
+
+				response = parsePage(page_no, base_url_of_sub_category)
+				soup_page = BeautifulSoup(response)
+				items_links_text = soup_page.find('div' , {'class' : 'review-results'}).find_all('a' , {'class' : 'review-product'})
+		
+				# DEBUGGING
+				# for item_link_text in items_links_text:
+				# 	print 'gonna parse'
+				# 	print parseItem(item_link_text)
+				##############
+
+				p = Pool(30)  
+				itemList = p.map(parseItem, items_links_text) # Change this to len(data["products"])
+				p.terminate()
+				p.join()
+
+				# DEBUGGING
+				print 'sub name .. ' + sub_category + ' .. total Pages .. '+ str(total_pages_in_sub_category) + ' .. Page no ..' + str(page_no) + ' ..  items in page .. ' + str(len(itemList))
+
+				for item in itemList:
+					item['category1'] = category
+					item['category3'] = sub_category
+					wr.writerow([item['picture'], item['product'] , item['brand'], item['price'], item['category1'], item['category3'], item['ingredients'], item['animal_test']])
